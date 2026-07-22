@@ -3,20 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>论文写作助手</title>
+  <title>论文管理工作台</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="app-header">
     <div>
-      <p class="eyebrow">Paper Writing Assistant</p>
-      <h1>论文写作助手</h1>
-      <p class="subtitle">围绕你的选题与开题报告，管理大纲、章节、文献、修改意见和写作进度。</p>
+      <p class="eyebrow">Thesis Workspace</p>
+      <h1>论文管理工作台</h1>
+      <p class="subtitle">管理字数、待办、章节正文、导师意见和文献资料，把论文推进过程理清楚。</p>
     </div>
     <div class="header-actions">
       <div id="cloudStatus" class="cloud-status offline">本地模式</div>
-      <button id="authOpenBtn" class="btn secondary">登录/注册</button>
-      <button id="syncCloudBtn" class="btn secondary">同步云端</button>
+      <button id="authOpenBtn" class="btn secondary">账号</button>
+      <button id="saveCloudBtnTop" class="btn secondary">保存云端</button>
       <button id="saveBtn" class="btn secondary">保存</button>
       <button id="exportBtn" class="btn primary">导出 Markdown</button>
     </div>
@@ -25,123 +25,131 @@
   <main class="layout">
     <aside class="sidebar">
       <nav>
-        <button class="nav-item active" data-section="project">项目信息</button>
-        <button class="nav-item" data-section="proposal">开题报告</button>
-        <button class="nav-item" data-section="outline">论文大纲</button>
-        <button class="nav-item" data-section="chapters">分章写作</button>
-        <button class="nav-item" data-section="literature">参考文献</button>
-        <button class="nav-item" data-section="review">检查润色</button>
-        <button class="nav-item" data-section="progress">进度看板</button>
+        <button class="nav-item active" data-section="dashboard">论文总控台</button>
+        <button class="nav-item" data-section="chapters">章节写作管理</button>
+        <button class="nav-item" data-section="feedback">导师意见追踪</button>
+        <button class="nav-item" data-section="literature">文献资料库</button>
         <button class="nav-item" data-section="account">账号与云同步</button>
       </nav>
       <div class="tip-card">
-        <strong>建议流程</strong>
+        <strong>使用建议</strong>
         <ol>
-          <li>填写项目信息</li>
-          <li>粘贴开题报告</li>
-          <li>生成并调整大纲</li>
-          <li>登录后云端保存</li>
+          <li>先填总控台目标字数</li>
+          <li>按章节写正文和备注</li>
+          <li>导师意见逐条追踪</li>
+          <li>文献按对应章节整理</li>
         </ol>
       </div>
     </aside>
 
     <section class="content">
-      <section id="project" class="panel active">
+      <section id="dashboard" class="panel active">
         <div class="panel-title">
-          <h2>项目信息</h2>
-          <p>先把论文的基本约束写清楚，后续生成内容会更稳定。</p>
+          <h2>论文总控台</h2>
+          <p>查看整体进度，维护目标字数和待办事项。</p>
         </div>
+
         <div class="grid two">
-          <label>论文题目<input id="title" placeholder="例如：生成式人工智能对大学生学习效率的影响研究" /></label>
-          <label>专业/方向<input id="major" placeholder="例如：教育技术学 / 工商管理 / 计算机应用" /></label>
-          <label>论文类型<select id="paperType"><option>本科毕业论文</option><option>硕士论文</option><option>课程论文</option><option>期刊论文</option></select></label>
-          <label>预计字数<input id="wordTarget" type="number" placeholder="例如：12000" /></label>
-          <label>提交日期<input id="deadline" type="date" /></label>
-          <label>学校格式要求<input id="formatRules" placeholder="例如：GB/T 7714，二级标题黑体小三" /></label>
+          <label>论文题目<input id="paperTitle" placeholder="请输入论文题目" /></label>
+          <label>目标字数<input id="targetWords" type="number" placeholder="例如：12000" /></label>
         </div>
-        <label>导师意见 / 写作要求<textarea id="advisorNotes" placeholder="粘贴导师已给出的要求、修改意见或注意事项"></textarea></label>
-      </section>
 
-      <section id="proposal" class="panel">
-        <div class="panel-title">
-          <h2>开题报告</h2>
-          <p>粘贴你的开题报告，系统会提取研究背景、问题、方法等写作素材。</p>
-        </div>
-        <textarea id="proposalText" class="large" placeholder="把开题报告正文粘贴到这里……"></textarea>
-        <div class="actions"><button id="analyzeProposalBtn" class="btn primary">解析开题报告</button></div>
-        <div id="proposalCards" class="cards"></div>
-      </section>
+        <div id="dashboardStats" class="stats"></div>
 
-      <section id="outline" class="panel">
-        <div class="panel-title">
-          <h2>论文大纲</h2>
-          <p>可以自动生成，也可以直接手动编辑。每一行代表一个章节或小节。</p>
+        <div class="section-head">
+          <h3>待办事项</h3>
+          <button id="addTodoBtn" class="btn primary">添加待办</button>
         </div>
-        <div class="actions">
-          <button id="generateOutlineBtn" class="btn primary">根据开题报告生成大纲</button>
-          <button id="syncChaptersBtn" class="btn secondary">同步到分章写作</button>
+        <div class="grid three todo-inputs">
+          <input id="todoText" placeholder="待办内容，例如：补充第二章文献综述" />
+          <input id="todoDue" type="date" />
+          <select id="todoStatus">
+            <option>未开始</option>
+            <option>进行中</option>
+            <option>已完成</option>
+          </select>
         </div>
-        <textarea id="outlineText" class="large mono" placeholder="第一章 绪论&#10;1.1 研究背景&#10;1.2 研究意义&#10;……"></textarea>
+        <div id="todoList" class="list"></div>
       </section>
 
       <section id="chapters" class="panel">
         <div class="panel-title">
-          <h2>分章写作</h2>
-          <p>选择章节后生成初稿、扩写、压缩或改成更学术的表达。</p>
+          <h2>章节写作管理</h2>
+          <p>每章单独管理标题、状态、正文、字数和修改备注。</p>
         </div>
+
+        <div class="section-head">
+          <h3>章节列表</h3>
+          <button id="addChapterBtn" class="btn primary">添加章节</button>
+        </div>
+
         <div class="chapter-layout">
-          <div class="chapter-list" id="chapterList"></div>
+          <div id="chapterList" class="chapter-list"></div>
           <div class="chapter-editor">
-            <input id="chapterTitle" placeholder="章节标题" />
-            <textarea id="chapterContent" class="large" placeholder="章节正文……"></textarea>
+            <div class="grid two">
+              <label>章节标题<input id="chapterTitle" placeholder="例如：第一章 绪论" /></label>
+              <label>写作状态<select id="chapterStatus"><option>未开始</option><option>写作中</option><option>已完成</option></select></label>
+            </div>
+            <div class="mini-stat">当前字数：<strong id="chapterWordCount">0</strong></div>
+            <label>章节正文<textarea id="chapterContent" class="large" placeholder="在这里写这一章的正文……"></textarea></label>
+            <label>修改备注<textarea id="chapterNotes" placeholder="记录这一章需要修改、补充或注意的地方"></textarea></label>
             <div class="actions wrap">
-              <button class="btn primary" data-ai="draft">生成本章初稿</button>
-              <button class="btn secondary" data-ai="expand">扩写</button>
-              <button class="btn secondary" data-ai="polish">学术化润色</button>
-              <button class="btn secondary" data-ai="shorten">压缩</button>
-              <button id="saveChapterBtn" class="btn secondary">保存本章</button>
+              <button id="saveChapterBtn" class="btn primary">保存章节</button>
+              <button id="deleteChapterBtn" class="btn secondary danger">删除章节</button>
             </div>
           </div>
         </div>
       </section>
 
+      <section id="feedback" class="panel">
+        <div class="panel-title">
+          <h2>导师意见追踪</h2>
+          <p>把导师反馈逐条记录下来，并跟踪处理记录。</p>
+        </div>
+
+        <div class="grid two">
+          <label>对应章节<input id="feedbackChapter" placeholder="例如：第二章 文献综述" /></label>
+          <label>处理状态<select id="feedbackStatus"><option>未处理</option><option>处理中</option><option>已处理</option></select></label>
+        </div>
+        <label>反馈内容<textarea id="feedbackText" placeholder="粘贴导师反馈或修改意见"></textarea></label>
+        <label>处理记录<textarea id="feedbackRecord" placeholder="记录你如何修改、改到了哪里"></textarea></label>
+        <div class="actions"><button id="addFeedbackBtn" class="btn primary">添加导师意见</button></div>
+        <div id="feedbackList" class="list"></div>
+      </section>
+
       <section id="literature" class="panel">
         <div class="panel-title">
-          <h2>参考文献</h2>
-          <p>先手动录入文献，后续可以扩展为 PDF 上传、自动识别和引用格式转换。</p>
+          <h2>文献资料库</h2>
+          <p>整理参考文献、来源链接、摘要笔记、可引用观点和对应章节。</p>
         </div>
-        <div class="grid three">
-          <input id="litTitle" placeholder="文献标题" />
-          <input id="litAuthors" placeholder="作者" />
-          <input id="litYear" placeholder="年份" />
-        </div>
-        <textarea id="litSummary" placeholder="摘要、核心观点、可引用内容"></textarea>
-        <div class="actions"><button id="addLitBtn" class="btn primary">添加文献</button></div>
-        <div id="litList" class="list"></div>
-      </section>
 
-      <section id="review" class="panel">
-        <div class="panel-title">
-          <h2>检查润色</h2>
-          <p>对当前章节做结构、格式、引用和表达风险检查。</p>
+        <div class="section-head">
+          <h3>文献列表</h3>
+          <button id="addLitBtn" class="btn primary">添加文献</button>
         </div>
-        <div class="actions"><button id="runReviewBtn" class="btn primary">检查当前章节</button></div>
-        <div id="reviewResult" class="review-box"></div>
-      </section>
 
-      <section id="progress" class="panel">
-        <div class="panel-title">
-          <h2>进度看板</h2>
-          <p>自动统计章节字数与完成状态。</p>
+        <div class="literature-layout">
+          <div id="litList" class="literature-list"></div>
+          <div class="literature-editor">
+            <div class="grid two">
+              <label>参考文献<input id="litReference" placeholder="例如：作者. 题名[J]. 期刊, 年份." /></label>
+              <label>对应章节<input id="litChapter" placeholder="例如：第二章 文献综述" /></label>
+            </div>
+            <label>来源链接<input id="litLink" placeholder="https:// 或数据库链接" /></label>
+            <label>摘要/笔记<textarea id="litNotes" placeholder="记录摘要、研究方法、结论或你的阅读笔记"></textarea></label>
+            <label>可引用观点<textarea id="litQuote" placeholder="整理可以写进论文的观点、数据或表述"></textarea></label>
+            <div class="actions wrap">
+              <button id="saveLitBtn" class="btn primary">保存文献</button>
+              <button id="deleteLitBtn" class="btn secondary danger">删除文献</button>
+            </div>
+          </div>
         </div>
-        <div id="stats" class="stats"></div>
-        <div id="progressList" class="list"></div>
       </section>
 
       <section id="account" class="panel">
         <div class="panel-title">
           <h2>账号与云同步</h2>
-          <p>登录后，论文数据会保存到 Supabase 云数据库，换设备也能继续写。</p>
+          <p>登录后，论文数据会保存到 Supabase 云数据库，换设备也能继续管理。</p>
         </div>
         <div class="auth-card">
           <div id="authInfo" class="review-box">正在检查登录状态……</div>
@@ -156,7 +164,6 @@
             <button id="loadCloudBtn" class="btn secondary">从云端加载</button>
             <button id="saveCloudBtn" class="btn primary">保存到云端</button>
           </div>
-          <p class="small-note">首次使用需要先在 Supabase 创建项目，并把项目 URL / anon key 填进 <code>config.js</code>。</p>
         </div>
       </section>
     </section>

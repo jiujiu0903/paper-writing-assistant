@@ -1,14 +1,17 @@
-const STORAGE_KEY = "paper-writing-assistant-v2";
-const PROJECT_ROW_ID_KEY = "paper-writing-assistant-project-row-id";
+const STORAGE_KEY = "paper-workspace-v3";
+const PROJECT_ROW_ID_KEY = "paper-project-row-id";
 
 const state = {
-  project: {},
-  proposal: "",
-  proposalAnalysis: {},
-  outline: "",
+  meta: {
+    paperTitle: "",
+    targetWords: ""
+  },
+  todos: [],
   chapters: [],
   activeChapter: 0,
-  literature: []
+  feedback: [],
+  literature: [],
+  activeLiterature: 0
 };
 
 let supabaseClient = null;
@@ -16,7 +19,6 @@ let currentUser = null;
 let cloudSaveTimer = null;
 
 const $ = (id) => document.getElementById(id);
-const fields = ["title", "major", "paperType", "wordTarget", "deadline", "formatRules", "advisorNotes"];
 
 function initSupabase() {
   if (window.SUPABASE_URL && window.SUPABASE_ANON_KEY && window.supabase) {
@@ -26,295 +28,396 @@ function initSupabase() {
 
 async function load() {
   initSupabase();
-  const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("paper-writing-assistant-v1");
-  if (saved) Object.assign(state, JSON.parse(saved));
+  const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("paper-writing-assistant-v2") || localStorage.getItem("paper-writing-assistant-v1");
+  if (saved) migrateAndAssign(JSON.parse(saved));
   hydrateFields();
+  bindEvents();
   renderAll();
   await refreshAuth();
 }
 
-function hydrateFields() {
-  fields.forEach(id => { if ($(id)) $(id).value = state.project[id] || ""; });
-  $("proposalText").value = state.proposal || "";
-  $("outlineText").value = state.outline || "";
+function migrateAndAssign(data) {
+  if (data.meta || data.todos || data.feedback) {
+    Object.assign(state, data);
+    return;
+  }
+  state.meta.paperTitle = data.project?.title || "";
+  state.meta.targetWords = data.project?.wordTarget || "";
+  state.chapters = (data.chapters || []).map(c => ({
+    title: c.title || "未命名章节",
+    status: c.status === "进行中" ? "写作中" : (c.status || "未开始"),
+    content: c.content || "",
+    notes: c.notes || ""
+  }));
+  state.literature = (data.literature || []).map(l => ({
+    reference: [l.authors, l.title, l.year].filter(Boolean).join(". ") || l.title || "未命名文献",
+    link: l.link || "",
+    notes: l.summary || "",
+    quote: l.quote || "",
+    chapter: l.chapter || ""
+  }));
 }
 
-function collectFields() {
-  fields.forEach(id => state.project[id] = $(id)?.value || "");
-  state.proposal = $("proposalText")?.value || "";
-  state.outline = $("outlineText")?.value || "";
+function hydrateFields() {
+  $("paperTitle").value = state.meta.paperTitle || "";
+  $("targetWords").value = state.meta.targetWords || "";
+}
+
+function collectMeta() {
+  state.meta.paperTitle = $("paperTitle").value.trim();
+  state.meta.targetWords = $("targetWords").value;
+}
+
+function bindEvents() {
+  document.querySelectorAll(".nav-item").forEach(btn => btn.addEventListener("click", () => navTo(btn.dataset.section)));
+  ["paperTitle", "targetWords"].forEach(id => $(id).addEventListener("input", () => save(false)));
+
+  $("saveBtn").addEventListener("click", () => save(true));
+  $("exportBtn").addEventListener("click", exportMarkdown);
+  $("authOpenBtn").addEventListener("click", () => navTo("account"));
+  $("saveCloudBtnTop").addEventListener("click", () => saveToCloud(true));
+
+  $("addTodoBtn").addEventListener("click", addTodo);
+  $("addChapterBtn").addEventListener("click", addChapter);
+  $("saveChapterBtn").addEventListener("click", saveActiveChapter);
+  $("deleteChapterBtn").addEventListener("click", deleteActiveChapter);
+  $("chapterContent").addEventListener("input", updateChapterWordCount);
+
+  $("addFeedbackBtn").addEventListener("click", addFeedback);
+  $("addLitBtn").addEventListener("click", addLiterature);
+  $("saveLitBtn").addEventListener("click", saveActiveLiterature);
+  $("deleteLitBtn").addEventListener("click", deleteActiveLiterature);
+
+  $("signUpBtn").addEventListener("click", signUp);
+  $("signInBtn").addEventListener("click", signIn);
+  $("signOutBtn").addEventListener("click", signOut);
+  $("loadCloudBtn").addEventListener("click", () => loadFromCloud(true));
+  $("saveCloudBtn").addEventListener("click", () => saveToCloud(true));
+}
+
+function navTo(sectionId) {
+  document.querySelectorAll(".nav-item").forEach(btn => btn.classList.toggle("active", btn.dataset.section === sectionId));
+  document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active", panel.id === sectionId));
+  if (sectionId === "dashboard") renderDashboard();
 }
 
 function save(show = true, sync = true) {
-  collectFields();
+  collectMeta();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  if (show) toast(currentUser ? "已保存到本地，稍后同步云端" : "已保存到浏览器本地");
+  if (show) toast(currentUser ? "已保存，稍后同步云端" : "已保存到本地");
+  renderDashboard();
   if (sync) scheduleCloudSave();
 }
 
 function scheduleCloudSave() {
   if (!currentUser || !supabaseClient) return;
   clearTimeout(cloudSaveTimer);
-  cloudSaveTimer = setTimeout(() => saveToCloud(false), 1000);
-}
-
-function toast(text) {
-  const el = $("toast");
-  el.textContent = text;
-  el.classList.add("show");
-  setTimeout(() => el.classList.remove("show"), 1800);
-}
-
-function navTo(sectionId) {
-  document.querySelectorAll(".nav-item").forEach(btn => btn.classList.toggle("active", btn.dataset.section === sectionId));
-  document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active", panel.id === sectionId));
-  if (sectionId === "progress") renderProgress();
+  cloudSaveTimer = setTimeout(() => saveToCloud(false), 1200);
 }
 
 function renderAll() {
-  renderProposalCards();
+  renderDashboard();
   renderChapters();
+  renderFeedback();
   renderLiterature();
-  renderProgress();
 }
 
-document.querySelectorAll(".nav-item").forEach(btn => btn.addEventListener("click", () => navTo(btn.dataset.section)));
-fields.forEach(id => $(id)?.addEventListener("input", () => save(false)));
-$("proposalText").addEventListener("input", () => save(false));
-$("outlineText").addEventListener("input", () => save(false));
-$("saveBtn").addEventListener("click", () => save(true));
-$("syncCloudBtn").addEventListener("click", () => saveToCloud(true));
-$("authOpenBtn").addEventListener("click", () => navTo("account"));
-
-function pickSentences(text, keywords, fallback) {
-  const sentences = text.replace(/\n+/g, " ").split(/[。！？；;.!?]/).map(s => s.trim()).filter(Boolean);
-  const found = sentences.filter(s => keywords.some(k => s.includes(k))).slice(0, 3);
-  return found.length ? found.join("。") + "。" : fallback;
+function renderDashboard() {
+  collectMeta();
+  const currentWords = state.chapters.reduce((sum, chapter) => sum + countWords(chapter.content), 0);
+  const targetWords = Number(state.meta.targetWords || 0);
+  const completedTodos = state.todos.filter(todo => todo.status === "已完成").length;
+  const completedChapters = state.chapters.filter(chapter => chapter.status === "已完成").length;
+  $("dashboardStats").innerHTML = `
+    <div class="stat-card"><strong>${currentWords}</strong><span>当前总字数</span></div>
+    <div class="stat-card"><strong>${targetWords || 0}</strong><span>目标字数</span></div>
+    <div class="stat-card"><strong>${targetWords ? Math.min(100, Math.round(currentWords / targetWords * 100)) : 0}%</strong><span>字数完成度</span></div>
+    <div class="stat-card"><strong>${completedChapters}/${state.chapters.length}</strong><span>章节完成</span></div>
+    <div class="stat-card"><strong>${completedTodos}/${state.todos.length}</strong><span>待办完成</span></div>
+    <div class="stat-card"><strong>${state.feedback.filter(f => f.status !== "已处理").length}</strong><span>未处理导师意见</span></div>
+  `;
+  renderTodos();
 }
 
-$("analyzeProposalBtn").addEventListener("click", () => {
-  const text = $("proposalText").value.trim();
-  if (!text) return toast("请先粘贴开题报告");
-  state.proposalAnalysis = {
-    background: pickSentences(text, ["背景", "现状", "发展", "问题"], "待补充：研究背景与现实问题。"),
-    significance: pickSentences(text, ["意义", "价值", "作用", "贡献"], "待补充：理论意义与实践意义。"),
-    question: pickSentences(text, ["问题", "目标", "目的", "研究内容"], "待补充：核心研究问题与研究目标。"),
-    method: pickSentences(text, ["方法", "问卷", "访谈", "实验", "案例", "模型", "数据"], "待补充：研究方法、数据来源与分析路径。"),
-    innovation: pickSentences(text, ["创新", "特色", "不足", "改进"], "待补充：创新点、特色或预期贡献。")
-  };
-  renderProposalCards();
-  save(false);
-  toast("已完成初步解析");
-});
-
-function renderProposalCards() {
-  const map = { background: "研究背景", significance: "研究意义", question: "研究问题", method: "研究方法", innovation: "创新点" };
-  const html = Object.entries(map).map(([key, title]) => `
-    <article class="card"><h3>${title}</h3><p>${escapeHtml(state.proposalAnalysis[key] || "暂无内容，点击解析开题报告后生成。")}</p></article>
-  `).join("");
-  $("proposalCards").innerHTML = html;
-}
-
-$("generateOutlineBtn").addEventListener("click", () => {
-  const title = state.project.title || $("title").value || "你的论文题目";
-  const outline = [
-    `论文题目：${title}`,
-    "",
-    "第一章 绪论",
-    "1.1 研究背景",
-    "1.2 研究意义",
-    "1.3 国内外研究现状",
-    "1.4 研究内容与研究方法",
-    "1.5 研究思路与技术路线",
-    "",
-    "第二章 文献综述与理论基础",
-    "2.1 核心概念界定",
-    "2.2 相关理论基础",
-    "2.3 既有研究评述",
-    "",
-    "第三章 研究设计",
-    "3.1 研究对象与样本说明",
-    "3.2 数据来源与收集方法",
-    "3.3 指标设计与分析方法",
-    "",
-    "第四章 研究结果与分析",
-    "4.1 数据描述与基本情况",
-    "4.2 主要问题分析",
-    "4.3 影响因素或机制分析",
-    "",
-    "第五章 对策建议",
-    "5.1 研究发现总结",
-    "5.2 对策与优化建议",
-    "5.3 实施保障",
-    "",
-    "第六章 结论与展望",
-    "6.1 研究结论",
-    "6.2 研究不足",
-    "6.3 未来展望",
-    "",
-    "参考文献",
-    "致谢"
-  ].join("\n");
-  $("outlineText").value = outline;
-  state.outline = outline;
-  save(false);
-  toast("已生成通用论文大纲");
-});
-
-$("syncChaptersBtn").addEventListener("click", syncChaptersFromOutline);
-
-function syncChaptersFromOutline() {
-  const lines = $("outlineText").value.split("\n").map(s => s.trim()).filter(Boolean);
-  const chapterLines = lines.filter(line => /^(第[一二三四五六七八九十]+章|\d+(\.\d+)*\s+)/.test(line));
-  if (!chapterLines.length) return toast("大纲里没有识别到章节");
-  state.chapters = chapterLines.map(title => {
-    const old = state.chapters.find(c => c.title === title);
-    return old || { title, content: "", status: "未开始" };
+function addTodo() {
+  const text = $("todoText").value.trim();
+  if (!text) return toast("请填写待办内容");
+  state.todos.unshift({
+    text,
+    due: $("todoDue").value,
+    status: $("todoStatus").value
   });
-  state.activeChapter = 0;
+  ["todoText", "todoDue"].forEach(id => $(id).value = "");
+  $("todoStatus").value = "未开始";
+  renderTodos();
+  save(false);
+  toast("已添加待办");
+}
+
+function renderTodos() {
+  $("todoList").innerHTML = state.todos.map((todo, index) => `
+    <article class="list-item ${todo.status === "已完成" ? "done" : ""}">
+      <div class="item-main">
+        <h3>${escapeHtml(todo.text)}</h3>
+        <div class="meta">${escapeHtml(todo.status)}${todo.due ? ` · 截止：${escapeHtml(todo.due)}` : ""}</div>
+      </div>
+      <div class="item-actions">
+        <button class="btn secondary" onclick="cycleTodo(${index})">切换状态</button>
+        <button class="btn secondary danger" onclick="removeTodo(${index})">删除</button>
+      </div>
+    </article>
+  `).join("") || "<p class='review-box'>暂无待办事项。</p>";
+}
+
+window.cycleTodo = function(index) {
+  const order = ["未开始", "进行中", "已完成"];
+  const todo = state.todos[index];
+  todo.status = order[(order.indexOf(todo.status) + 1) % order.length];
+  renderDashboard();
+  save(false);
+};
+
+window.removeTodo = function(index) {
+  state.todos.splice(index, 1);
+  renderDashboard();
+  save(false);
+};
+
+function addChapter() {
+  const next = state.chapters.length + 1;
+  state.chapters.push({ title: `第${next}章 未命名章节`, status: "未开始", content: "", notes: "" });
+  state.activeChapter = state.chapters.length - 1;
   renderChapters();
   save(false);
-  toast("已同步到分章写作");
 }
 
 function renderChapters() {
   const list = $("chapterList");
   if (!state.chapters.length) {
-    list.innerHTML = `<button class="chapter-tab active">暂无章节，请先同步大纲</button>`;
-    $("chapterTitle").value = "";
-    $("chapterContent").value = "";
+    list.innerHTML = "<p class='review-box'>暂无章节，点击“添加章节”开始。</p>";
+    fillChapterEditor(null);
     return;
   }
-  list.innerHTML = state.chapters.map((c, i) => `<button class="chapter-tab ${i === state.activeChapter ? "active" : ""}" data-index="${i}">${escapeHtml(c.title)}<br><small>${countWords(c.content)} 字</small></button>`).join("");
+  list.innerHTML = state.chapters.map((chapter, index) => `
+    <button class="chapter-tab ${index === state.activeChapter ? "active" : ""}" data-index="${index}">
+      ${escapeHtml(chapter.title)}<br>
+      <small>${escapeHtml(chapter.status)} · ${countWords(chapter.content)} 字</small>
+    </button>
+  `).join("");
   list.querySelectorAll(".chapter-tab").forEach(btn => btn.addEventListener("click", () => {
     state.activeChapter = Number(btn.dataset.index);
     renderChapters();
   }));
+  fillChapterEditor(state.chapters[state.activeChapter]);
+}
+
+function fillChapterEditor(chapter) {
+  $("chapterTitle").value = chapter?.title || "";
+  $("chapterStatus").value = chapter?.status || "未开始";
+  $("chapterContent").value = chapter?.content || "";
+  $("chapterNotes").value = chapter?.notes || "";
+  updateChapterWordCount();
+}
+
+function updateChapterWordCount() {
+  $("chapterWordCount").textContent = countWords($("chapterContent").value || "");
+}
+
+function saveActiveChapter() {
+  if (!state.chapters.length) return toast("请先添加章节");
   const chapter = state.chapters[state.activeChapter];
-  $("chapterTitle").value = chapter.title;
-  $("chapterContent").value = chapter.content;
-}
-
-function currentChapter() {
-  if (!state.chapters.length) syncChaptersFromOutline();
-  return state.chapters[state.activeChapter];
-}
-
-$("saveChapterBtn").addEventListener("click", () => {
-  const c = currentChapter();
-  if (!c) return toast("请先创建章节");
-  c.title = $("chapterTitle").value.trim();
-  c.content = $("chapterContent").value.trim();
-  c.status = c.content ? "进行中" : "未开始";
+  chapter.title = $("chapterTitle").value.trim() || "未命名章节";
+  chapter.status = $("chapterStatus").value;
+  chapter.content = $("chapterContent").value;
+  chapter.notes = $("chapterNotes").value;
   renderChapters();
   save(true);
-});
+}
 
-document.querySelectorAll("[data-ai]").forEach(btn => btn.addEventListener("click", () => generateText(btn.dataset.ai)));
-
-function generateText(mode) {
-  const c = currentChapter();
-  if (!c) return;
-  const title = $("chapterTitle").value.trim() || c.title;
-  const analysis = state.proposalAnalysis;
-  const base = $("chapterContent").value.trim();
-  let text = "";
-  if (mode === "draft") {
-    text = `【${title}】\n\n本节围绕“${state.project.title || "本研究主题"}”展开论述。结合开题报告中的研究背景可以看出，${analysis.background || "该问题具有明确的现实背景和研究价值。"}\n\n从研究意义来看，${analysis.significance || "本研究既有助于补充相关理论讨论，也能够为实践改进提供参考。"}\n\n在具体写作中，本节可进一步从概念界定、现实问题、已有研究不足以及本文研究切入点四个方面展开，以保证论述层次清晰、逻辑完整。`;
-  } else if (mode === "expand") {
-    text = base + `\n\n进一步来看，该部分还需要结合具体研究对象展开说明。一方面，应说明该问题产生的背景与表现；另一方面，也需要分析其背后的原因、影响路径及可能后果。通过这种展开方式，可以使章节内容从一般性描述转向更具针对性的学术分析。`;
-  } else if (mode === "polish") {
-    text = (base || `本节主要讨论${title}。`).replace(/我觉得/g, "本文认为").replace(/很重要/g, "具有重要意义").replace(/有帮助/g, "能够提供参考");
-    text += `\n\n【润色提示】后续可补充权威文献支撑，并减少绝对化表达，使论证更符合学术写作规范。`;
-  } else if (mode === "shorten") {
-    text = base.split(/[。！？]/).filter(Boolean).slice(0, 4).join("。") + "。";
-  }
-  $("chapterContent").value = text;
-  c.title = title;
-  c.content = text;
-  c.status = "进行中";
+function deleteActiveChapter() {
+  if (!state.chapters.length) return;
+  if (!confirm("确定删除当前章节吗？正文和备注也会删除。")) return;
+  state.chapters.splice(state.activeChapter, 1);
+  state.activeChapter = Math.max(0, state.activeChapter - 1);
   renderChapters();
   save(false);
-  toast("已生成文本，可继续手动调整");
+  toast("已删除章节");
 }
 
-$("addLitBtn").addEventListener("click", () => {
-  const item = {
-    title: $("litTitle").value.trim(),
-    authors: $("litAuthors").value.trim(),
-    year: $("litYear").value.trim(),
-    summary: $("litSummary").value.trim()
-  };
-  if (!item.title) return toast("请填写文献标题");
-  state.literature.push(item);
-  ["litTitle", "litAuthors", "litYear", "litSummary"].forEach(id => $(id).value = "");
+function addFeedback() {
+  const text = $("feedbackText").value.trim();
+  if (!text) return toast("请填写反馈内容");
+  state.feedback.unshift({
+    chapter: $("feedbackChapter").value.trim(),
+    status: $("feedbackStatus").value,
+    text,
+    record: $("feedbackRecord").value.trim(),
+    createdAt: new Date().toLocaleDateString()
+  });
+  ["feedbackChapter", "feedbackText", "feedbackRecord"].forEach(id => $(id).value = "");
+  $("feedbackStatus").value = "未处理";
+  renderFeedback();
+  save(false);
+  toast("已添加导师意见");
+}
+
+function renderFeedback() {
+  $("feedbackList").innerHTML = state.feedback.map((item, index) => `
+    <article class="list-item">
+      <h3>${escapeHtml(item.chapter || "未指定章节")}</h3>
+      <div class="meta">${escapeHtml(item.status)} · ${escapeHtml(item.createdAt || "")}</div>
+      <p><strong>反馈内容：</strong>${escapeHtml(item.text)}</p>
+      <p><strong>处理记录：</strong>${escapeHtml(item.record || "暂无")}</p>
+      <div class="item-actions">
+        <button class="btn secondary" onclick="cycleFeedback(${index})">切换状态</button>
+        <button class="btn secondary danger" onclick="removeFeedback(${index})">删除</button>
+      </div>
+    </article>
+  `).join("") || "<p class='review-box'>暂无导师意见。</p>";
+}
+
+window.cycleFeedback = function(index) {
+  const order = ["未处理", "处理中", "已处理"];
+  const item = state.feedback[index];
+  item.status = order[(order.indexOf(item.status) + 1) % order.length];
+  renderFeedback();
+  save(false);
+};
+
+window.removeFeedback = function(index) {
+  state.feedback.splice(index, 1);
+  renderFeedback();
+  save(false);
+};
+
+function addLiterature() {
+  state.literature.unshift({
+    reference: "未命名文献",
+    link: "",
+    notes: "",
+    quote: "",
+    chapter: ""
+  });
+  state.activeLiterature = 0;
   renderLiterature();
   save(false);
-  toast("已添加文献");
-});
+  toast("已新建文献，请在右侧填写详情");
+}
 
 function renderLiterature() {
-  $("litList").innerHTML = state.literature.map((item, i) => `
-    <article class="list-item">
-      <h3>${escapeHtml(item.title)}</h3>
-      <div class="meta">${escapeHtml(item.authors || "未知作者")} · ${escapeHtml(item.year || "未知年份")}</div>
-      <p>${escapeHtml(item.summary || "暂无摘要")}</p>
-      <button class="btn secondary" onclick="removeLit(${i})">删除</button>
-    </article>
-  `).join("") || "<p class='review-box'>暂无文献。</p>";
-}
-window.removeLit = function(index) { state.literature.splice(index, 1); renderLiterature(); save(false); };
-
-$("runReviewBtn").addEventListener("click", () => {
-  const text = $("chapterContent").value.trim();
-  const issues = [];
-  if (!text) issues.push("当前章节还没有正文。");
-  if (countWords(text) < 500) issues.push("章节字数偏少，建议补充背景、文献依据、分析过程或案例材料。");
-  if (!/[（(]?\d{4}[）)]?/.test(text) && state.literature.length) issues.push("正文中暂未发现年份型引用，建议在关键观点后加入参考文献支撑。");
-  if (/我觉得|非常|特别|很明显|肯定/.test(text)) issues.push("存在口语化或绝对化表达，建议改为更客观的学术表述。");
-  if (!/[。！？]$/.test(text) && text) issues.push("段落结尾标点可能不完整。");
-  if (!issues.length) issues.push("暂未发现明显问题。建议继续检查引用格式、图表编号和学校模板要求。");
-  $("reviewResult").textContent = issues.map((x, i) => `${i + 1}. ${x}`).join("\n");
-});
-
-function countWords(text = "") {
-  const cn = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
-  const en = (text.match(/[a-zA-Z0-9]+/g) || []).length;
-  return cn + en;
+  const list = $("litList");
+  if (typeof state.activeLiterature !== "number") state.activeLiterature = 0;
+  if (!state.literature.length) {
+    list.innerHTML = "<p class='review-box'>暂无文献，点击“添加文献”开始。</p>";
+    fillLiteratureEditor(null);
+    return;
+  }
+  if (state.activeLiterature >= state.literature.length) state.activeLiterature = state.literature.length - 1;
+  list.innerHTML = state.literature.map((item, index) => `
+    <button class="literature-tab ${index === state.activeLiterature ? "active" : ""}" data-index="${index}">
+      ${escapeHtml(shortText(item.reference || "未命名文献", 42))}<br>
+      <small>${escapeHtml(item.chapter || "未指定章节")}</small>
+    </button>
+  `).join("");
+  list.querySelectorAll(".literature-tab").forEach(btn => btn.addEventListener("click", () => {
+    state.activeLiterature = Number(btn.dataset.index);
+    renderLiterature();
+  }));
+  fillLiteratureEditor(state.literature[state.activeLiterature]);
 }
 
-function renderProgress() {
-  const total = state.chapters.reduce((sum, c) => sum + countWords(c.content), 0);
-  const target = Number(state.project.wordTarget || 0);
-  $("stats").innerHTML = `
-    <div class="stat-card"><strong>${state.chapters.length}</strong><span>章节数</span></div>
-    <div class="stat-card"><strong>${total}</strong><span>当前字数</span></div>
-    <div class="stat-card"><strong>${target ? Math.min(100, Math.round(total / target * 100)) : 0}%</strong><span>目标完成度</span></div>
-  `;
-  $("progressList").innerHTML = state.chapters.map(c => {
-    const words = countWords(c.content);
-    const status = words >= 800 ? "初稿完成" : words > 0 ? "进行中" : "未开始";
-    return `<article class="list-item"><h3>${escapeHtml(c.title)}</h3><div class="meta">${status} · ${words} 字</div><p>${words >= 800 ? "可以进入润色与引用检查。" : "建议继续补充论证、文献和案例。"}</p></article>`;
-  }).join("") || "<p class='review-box'>暂无章节，请先生成大纲并同步。</p>";
+function fillLiteratureEditor(item) {
+  $("litReference").value = item?.reference || "";
+  $("litLink").value = item?.link || "";
+  $("litNotes").value = item?.notes || "";
+  $("litQuote").value = item?.quote || "";
+  $("litChapter").value = item?.chapter || "";
 }
 
-$("exportBtn").addEventListener("click", () => {
+function saveActiveLiterature() {
+  if (!state.literature.length) addLiterature();
+  const item = state.literature[state.activeLiterature];
+  item.reference = $("litReference").value.trim() || "未命名文献";
+  item.link = $("litLink").value.trim();
+  item.notes = $("litNotes").value.trim();
+  item.quote = $("litQuote").value.trim();
+  item.chapter = $("litChapter").value.trim();
+  renderLiterature();
+  save(true);
+}
+
+function deleteActiveLiterature() {
+  if (!state.literature.length) return;
+  if (!confirm("确定删除当前文献吗？")) return;
+  state.literature.splice(state.activeLiterature, 1);
+  state.activeLiterature = Math.max(0, state.activeLiterature - 1);
+  renderLiterature();
+  save(false);
+  toast("已删除文献");
+}
+
+function exportMarkdown() {
   save(false, false);
   const md = buildMarkdown();
   const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${state.project.title || "论文草稿"}.md`;
+  a.download = `${state.meta.paperTitle || "论文管理记录"}.md`;
   a.click();
   URL.revokeObjectURL(url);
-});
+}
 
 function buildMarkdown() {
-  const project = state.project;
-  const chapters = state.chapters.map(c => `## ${c.title}\n\n${c.content || "（待补充）"}`).join("\n\n");
-  const refs = state.literature.map((l, i) => `[${i + 1}] ${l.authors || ""}. ${l.title}. ${l.year || ""}.`).join("\n");
-  return `# ${project.title || "论文草稿"}\n\n- 专业/方向：${project.major || ""}\n- 论文类型：${project.paperType || ""}\n- 预计字数：${project.wordTarget || ""}\n- 提交日期：${project.deadline || ""}\n\n## 开题报告摘要\n\n${state.proposal || ""}\n\n${chapters}\n\n## 参考文献\n\n${refs || "（待补充）"}\n`;
+  const currentWords = state.chapters.reduce((sum, chapter) => sum + countWords(chapter.content), 0);
+  return `# ${state.meta.paperTitle || "论文管理记录"}
+
+## 论文总控台
+
+- 当前总字数：${currentWords}
+- 目标字数：${state.meta.targetWords || "未设置"}
+
+### 待办事项
+
+${state.todos.map(todo => `- [${todo.status === "已完成" ? "x" : " "}] ${todo.text}${todo.due ? `（截止：${todo.due}）` : ""} - ${todo.status}`).join("\n") || "暂无"}
+
+## 章节写作管理
+
+${state.chapters.map(chapter => `### ${chapter.title}
+
+- 状态：${chapter.status}
+- 当前字数：${countWords(chapter.content)}
+
+#### 章节正文
+
+${chapter.content || "暂无"}
+
+#### 修改备注
+
+${chapter.notes || "暂无"}`).join("\n\n") || "暂无章节"}
+
+## 导师意见追踪
+
+${state.feedback.map(item => `### ${item.chapter || "未指定章节"}
+
+- 状态：${item.status}
+- 日期：${item.createdAt || ""}
+
+**反馈内容：** ${item.text}
+
+**处理记录：** ${item.record || "暂无"}`).join("\n\n") || "暂无导师意见"}
+
+## 文献资料库
+
+${state.literature.map(item => `### ${item.reference}
+
+- 对应章节：${item.chapter || "未指定"}
+- 来源链接：${item.link || "暂无"}
+
+**摘要/笔记：** ${item.notes || "暂无"}
+
+**可引用观点：** ${item.quote || "暂无"}`).join("\n\n") || "暂无文献"}
+`;
 }
 
 async function refreshAuth() {
@@ -335,11 +438,11 @@ async function refreshAuth() {
   } else {
     cloudStatus.textContent = "未登录";
     cloudStatus.className = "cloud-status offline";
-    authInfo.textContent = "未登录。注册或登录后，可以把论文项目保存到云数据库。";
+    authInfo.textContent = "未登录。注册或登录后，可以把论文管理数据保存到云数据库。";
   }
 }
 
-$("signUpBtn").addEventListener("click", async () => {
+async function signUp() {
   if (!ensureConfigured()) return;
   const email = $("authEmail").value.trim();
   const password = $("authPassword").value;
@@ -348,9 +451,9 @@ $("signUpBtn").addEventListener("click", async () => {
   if (error) return toast(error.message);
   toast("注册成功，如需邮箱验证请去邮箱点击验证链接");
   await refreshAuth();
-});
+}
 
-$("signInBtn").addEventListener("click", async () => {
+async function signIn() {
   if (!ensureConfigured()) return;
   const email = $("authEmail").value.trim();
   const password = $("authPassword").value;
@@ -360,18 +463,15 @@ $("signInBtn").addEventListener("click", async () => {
   await refreshAuth();
   await loadFromCloud(false);
   toast("登录成功");
-});
+}
 
-$("signOutBtn").addEventListener("click", async () => {
+async function signOut() {
   if (!ensureConfigured()) return;
   await supabaseClient.auth.signOut();
   currentUser = null;
   await refreshAuth();
   toast("已退出登录");
-});
-
-$("loadCloudBtn").addEventListener("click", () => loadFromCloud(true));
-$("saveCloudBtn").addEventListener("click", () => saveToCloud(true));
+}
 
 function ensureConfigured() {
   if (!supabaseClient) {
@@ -394,8 +494,8 @@ function ensureSupabase() {
 
 async function saveToCloud(show = true) {
   if (!ensureSupabase()) return;
-  collectFields();
-  const title = state.project.title || "未命名论文";
+  collectMeta();
+  const title = state.meta.paperTitle || "未命名论文";
   let rowId = localStorage.getItem(PROJECT_ROW_ID_KEY);
   const payload = {
     user_id: currentUser.id,
@@ -409,28 +509,49 @@ async function saveToCloud(show = true) {
   } else {
     result = await supabaseClient.from("paper_projects").insert(payload).select("id").single();
   }
-  if (result.error) {
-    toast(result.error.message);
-    return;
-  }
-  rowId = result.data.id;
-  localStorage.setItem(PROJECT_ROW_ID_KEY, rowId);
+  if (result.error) return toast(result.error.message);
+  localStorage.setItem(PROJECT_ROW_ID_KEY, result.data.id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (show) toast("已保存到云端");
 }
 
 async function loadFromCloud(show = true) {
   if (!ensureSupabase()) return;
-  let query = supabaseClient.from("paper_projects").select("id,title,data,updated_at").eq("user_id", currentUser.id).order("updated_at", { ascending: false }).limit(1);
-  const { data, error } = await query;
+  const { data, error } = await supabaseClient
+    .from("paper_projects")
+    .select("id,title,data,updated_at")
+    .eq("user_id", currentUser.id)
+    .order("updated_at", { ascending: false })
+    .limit(1);
   if (error) return toast(error.message);
-  if (!data.length) return show && toast("云端还没有项目，先保存一次");
+  if (!data.length) {
+    if (show) toast("云端还没有项目，先保存一次");
+    return;
+  }
   localStorage.setItem(PROJECT_ROW_ID_KEY, data[0].id);
-  Object.assign(state, data[0].data);
+  migrateAndAssign(data[0].data);
   hydrateFields();
   renderAll();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (show) toast("已从云端加载最新项目");
+}
+
+function shortText(text = "", max = 40) {
+  const value = String(text).trim();
+  return value.length > max ? value.slice(0, max) + "…" : value;
+}
+
+function countWords(text = "") {
+  const cn = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const en = (text.match(/[a-zA-Z0-9]+/g) || []).length;
+  return cn + en;
+}
+
+function toast(text) {
+  const el = $("toast");
+  el.textContent = text;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 1800);
 }
 
 function escapeHtml(value = "") {
@@ -440,6 +561,10 @@ function escapeHtml(value = "") {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function escapeAttr(value = "") {
+  return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
 load();
