@@ -567,4 +567,12 @@ function escapeAttr(value = "") {
   return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {
+      // GitHub Pages 或本地 file 模式下注册失败时，不影响正常使用。
+    });
+  });
+}
+
 load();
